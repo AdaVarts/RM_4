@@ -1,11 +1,13 @@
 from datasets import load_dataset, Dataset
-from transformers import AutoTokenizer, AutoModelForMaskedLM, AutoModelForSeq2SeqLM, pipeline
+from transformers import Trainer, TrainingArguments, AutoTokenizer, AutoModelForMaskedLM, AutoModelForSeq2SeqLM, pipeline
 import random
 from tqdm import tqdm
 import torch
 from sklearn.metrics import precision_score, recall_score, f1_score
 import time
 import pandas as pd
+from sklearn.model_selection import train_test_split
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -24,6 +26,66 @@ model_names = [
     "albert-base-v2",
     "facebook/bart-base",  # BART also works for MLM
 ]
+
+def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./fine_tuned_model"):
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    try:
+        model = AutoModelForMaskedLM.from_pretrained(model_name)
+    except:
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+
+    # Tokenize the dataset
+    def tokenize_function(examples):
+        encoding = tokenizer(examples["passages"], truncation=True, padding=True, max_length=512)
+        labels = encoding["input_ids"].copy()  # Create a copy of input_ids as the initial labels
+        for i, seq in enumerate(encoding["input_ids"]):
+            # Mask 15% of the tokens in the input
+            input_ids = seq
+            num_tokens = len(input_ids)
+            mask_indices = random.sample(range(num_tokens), max(1, int(num_tokens * 0.15)))
+            for mask_idx in mask_indices:
+                input_ids[mask_idx] = tokenizer.mask_token_id  # Replace with mask token
+                labels[i][mask_idx] = seq[mask_idx]  # Set the labels to the original token at masked positions
+        encoding["labels"] = labels  # Add labels to the encoding
+        return encoding
+
+    output_dir = os.path.join(output_dir_base, model_name.replace("/", "_"))  # Use model name to create the directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Apply the tokenizer to the datasets
+    train_dataset = train_dataset.map(tokenize_function, batched=True)
+    val_dataset = val_dataset.map(tokenize_function, batched=True)
+
+    # Define training arguments
+    training_args = TrainingArguments(
+        output_dir=output_dir,          # Output directory
+        eval_strategy="epoch",     # Evaluate at the end of each epoch
+        learning_rate=2e-5,              # Learning rate
+        per_device_train_batch_size=8,   # Batch size for training
+        per_device_eval_batch_size=8,    # Batch size for evaluation
+        num_train_epochs=3,              # Number of epochs
+        weight_decay=0.01,               # Weight decay
+        logging_dir='./logs',            # Log directory
+        logging_steps=10,                # Log every 10 steps
+    )
+
+    # Initialize the Trainer
+    trainer = Trainer(
+        model=model,                    # Model to train
+        args=training_args,             # Training arguments
+        train_dataset=train_dataset,    # Training dataset
+        eval_dataset=val_dataset        # Validation dataset
+    )
+
+    # Start fine-tuning
+    trainer.train()
+
+    # Save the model
+    model.save_pretrained(output_dir)
+    tokenizer.save_pretrained(output_dir)
+
+    print(f"Model and tokenizer saved to {output_dir}")
+
 
 # Function to measure speed and resource usage
 def measure_speed(func, *args, **kwargs):
@@ -46,13 +108,27 @@ def subset_msmarco_for_mlm(dataset, subset_size=5, min_passage_length=50):
     return random.sample(filtered_data, subset_size)
 
 # Get a subset of MS MARCO
-subset_size = 100
+subset_size = 200
 min_passage_length = 50
 subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
 
 # Extract passages
 passages = [example["passages"]["passage_text"][0] for example in subset]
 hf_dataset = Dataset.from_dict({"passages": passages})
+hf_list = hf_dataset.to_dict()
+
+# Split the data into training and validation
+train_data, test_data = train_test_split(hf_list["passages"], test_size=0.5, random_state=42)
+train_data, val_data = train_test_split(train_data, test_size=0.2, random_state=42)
+
+# Convert the splits back to Hugging Face Datasets
+train_dataset = Dataset.from_dict({"passages": train_data})
+val_dataset = Dataset.from_dict({"passages": val_data})
+test_dataset = Dataset.from_dict({"passages": test_data})
+
+for model_name in model_names:
+    print(f"Fine-tuning {model_name}...")
+    fine_tune_model(model_name, train_dataset, val_dataset)
 
 # Function to mask tokens in a text
 def mask_text(text, tokenizer, mask_prob=0.15):
@@ -65,12 +141,13 @@ def mask_text(text, tokenizer, mask_prob=0.15):
     return tokenizer.convert_tokens_to_string(masked_tokens), mask_indices
 
 # Function to evaluate MLM model
-def evaluate_mlm_model(model_name, hf_dataset, top_k, mask_prob=0.15):
+def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model_name = model_name.replace('/', '_')
     try:
-        model = AutoModelForMaskedLM.from_pretrained(model_name)
+        model = AutoModelForMaskedLM.from_pretrained(f"fine_tuned_model/{model_name}")
     except:
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(f"fine_tuned_model/{model_name}")
     nlp_pipeline = pipeline("fill-mask", model=model, tokenizer=tokenizer, device=0 if torch.cuda.is_available() else -1)
 
     # Mask the text for all passages in the dataset
@@ -78,10 +155,10 @@ def evaluate_mlm_model(model_name, hf_dataset, top_k, mask_prob=0.15):
         masked_text, mask_indices = mask_text(example["passages"], tokenizer, mask_prob)
         return {"masked_text": masked_text, "mask_indices": mask_indices}
 
-    hf_dataset = hf_dataset.map(mask_passage)
+    hft_dataset = hft_dataset.map(mask_passage)
 
     # Use the pipeline to process all masked texts
-    masked_texts = hf_dataset["masked_text"]
+    masked_texts = hft_dataset["masked_text"]
     predictions, elapsed_time = measure_speed(nlp_pipeline, masked_texts, batch_size=16)  # Batch size can be adjusted
 
     total_correct = 0
@@ -91,7 +168,7 @@ def evaluate_mlm_model(model_name, hf_dataset, top_k, mask_prob=0.15):
     top_k_correct = [0 for i in range (len(top_k))]
 
     # Evaluate predictions
-    for idx, passage in tqdm(enumerate(hf_dataset)):
+    for idx, passage in tqdm(enumerate(hft_dataset)):
         original_tokens = tokenizer.tokenize(passage["passages"])
         mask_indices = passage["mask_indices"]
         predicted_tokens = [pred["token_str"] for preds in predictions[idx] for pred in preds]
@@ -134,7 +211,7 @@ results = {}
 for model_name in model_names:
     print(f"Evaluating {model_name}...")
     top_k = [5,10,20]
-    accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, hf_dataset, top_k)
+    accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k)
     # Store results
     results[model_name] = {
         "accuracy": accuracy,
