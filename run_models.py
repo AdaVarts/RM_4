@@ -8,6 +8,7 @@ import time
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import os
+import numpy as np 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -115,29 +116,6 @@ def subset_msmarco_for_mlm(dataset, subset_size=5, min_passage_length=50):
     # Randomly sample a subset
     return random.sample(filtered_data, subset_size)
 
-# Get a subset of MS MARCO
-subset_size = 14000
-min_passage_length = 50
-subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
-
-# Extract passages
-passages = [example["passages"]["passage_text"][0] for example in subset]
-hf_dataset = Dataset.from_dict({"passages": passages})
-hf_list = hf_dataset.to_dict()
-
-# Split the data into training and validation
-train_data, test_data = train_test_split(hf_list["passages"], test_size=2000, random_state=42)
-train_data, val_data = train_test_split(train_data, test_size=2000, random_state=42)
-
-# Convert the splits back to Hugging Face Datasets
-train_dataset = Dataset.from_dict({"passages": train_data})
-val_dataset = Dataset.from_dict({"passages": val_data})
-test_dataset = Dataset.from_dict({"passages": test_data})
-
-for model_name in model_names:
-    print(f"Fine-tuning {model_name}...")
-    fine_tune_model(model_name, train_dataset, val_dataset)
-
 # Function to mask tokens in a text
 def mask_text(text, tokenizer, mask_prob=0.15):
     tokens = tokenizer.tokenize(text)
@@ -214,29 +192,65 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
 
     return accuracy, top_k_accuracy, precision, recall, f1, elapsed_time
 
-# Compare models
-results = {}
-for model_name in model_names:
-    print(f"Evaluating {model_name}...")
-    top_k = [5,10,20]
-    accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k)
-    # Store results
-    results[model_name] = {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "elapsed_time": elapsed_time,
-    }
-    for i in range(len(top_k)):
-        results[model_name][f"top_{top_k[i]}_accuracy"] = top_k_accuracy[i]
+# Get a subset of MS MARCO
+subset_size = 40
+min_passage_length = 50
+subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
 
-# Display results
-print("\nModel Comparison Results:")
-for model_name, metrics in results.items():
-    print(f"\n{model_name}:")
-    for metric, value in metrics.items():
-        print(f"  {metric}: {value:.4f}")
+# Extract passages
+passages = [example["passages"]["passage_text"][0] for example in subset]
+hf_dataset = Dataset.from_dict({"passages": passages})
+hf_list = hf_dataset.to_dict()
+
+results = {}
+for rand in [42, 123, 789, 56, 1008]:
+    # Split the data into training and validation
+    train_data, test_data = train_test_split(hf_list["passages"], test_size=10, random_state=rand)
+    train_data, val_data = train_test_split(train_data, test_size=10, random_state=rand)
+
+    # Convert the splits back to Hugging Face Datasets
+    train_dataset = Dataset.from_dict({"passages": train_data})
+    val_dataset = Dataset.from_dict({"passages": val_data})
+    test_dataset = Dataset.from_dict({"passages": test_data})
+
+    for model_name in model_names:
+        print(f"Fine-tuning {model_name}...")
+        fine_tune_model(model_name, train_dataset, val_dataset)
+        print(f"Evaluating {model_name}...")
+        
+        top_k = [5,10,20]
+        accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k)
+        # Store results
+        if model_name in results.keys():
+            results[model_name]["accuracy"].append([accuracy])
+            results[model_name]["precision"].append([precision])
+            results[model_name]["recall"].append([recall])
+            results[model_name]["f1"].append([f1])
+            results[model_name]["elapsed_time"].append([elapsed_time])
+            for i in range(len(top_k)):
+                results[model_name][f"top_{top_k[i]}_accuracy"].append(top_k_accuracy[i])
+        else: 
+            results[model_name] = {
+                "accuracy": [accuracy],
+                "precision": [precision],
+                "recall": [recall],
+                "f1": [f1],
+                "elapsed_time": [elapsed_time],
+            }
+            for i in range(len(top_k)):
+                results[model_name][f"top_{top_k[i]}_accuracy"] = [top_k_accuracy[i]]
+    
+    for model_name in model_names:
+        for metric in results[model_name].keys():
+            results[model_name][f'{metric}_mean'] = np.mean(results[model_name][metric])
+            results[model_name][f'{metric}_std'] = np.std(results[model_name][metric])
+
+    # Display results
+    print("\nModel Comparison Results:")
+    for model_name, metrics in results.items():
+        print(f"\n{model_name}:")
+        for metric, value in metrics.items():
+            print(f"  {metric}: {value})")
 
 df = pd.DataFrame.from_dict(results, orient='index')
 
