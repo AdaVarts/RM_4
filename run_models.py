@@ -19,15 +19,16 @@ dataset = load_dataset("ms_marco", msmarco_version)
 # Define the models to compare
 model_names = [
     "bert-base-uncased",
-    "bert-large-uncased",
-    "distilbert-base-uncased",
-    "roberta-base",
-    "roberta-large",
-    "albert-base-v2",
-    "facebook/bart-base",  # BART also works for MLM
+    # "bert-large-uncased",
+    # "distilbert-base-uncased",
+    # "roberta-base",
+    # "roberta-large",
+    # "albert-base-v2",
+    # "facebook/bart-base",  # BART also works for MLM
 ]
 
 def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./fine_tuned_model"):
+    start_time = time.time()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     try:
         model = AutoModelForMaskedLM.from_pretrained(model_name)
@@ -36,17 +37,22 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
 
     # Tokenize the dataset
     def tokenize_function(examples):
-        encoding = tokenizer(examples["passages"], truncation=True, padding=True, max_length=512)
-        labels = encoding["input_ids"].copy()  # Create a copy of input_ids as the initial labels
+        encoding = tokenizer(
+            examples["passages"],
+            truncation=True,  # Truncate sequences longer than max_length
+            padding="max_length",  # Pad shorter sequences to max_length
+            max_length=256,  # Ensure the length matches the model's maximum input size
+            return_tensors="pt"  # Return PyTorch tensors
+        )
+        labels = encoding["input_ids"].clone()  # Copy input_ids as the initial labels
         for i, seq in enumerate(encoding["input_ids"]):
             # Mask 15% of the tokens in the input
-            input_ids = seq
-            num_tokens = len(input_ids)
+            num_tokens = len(seq)
             mask_indices = random.sample(range(num_tokens), max(1, int(num_tokens * 0.15)))
             for mask_idx in mask_indices:
-                input_ids[mask_idx] = tokenizer.mask_token_id  # Replace with mask token
-                labels[i][mask_idx] = seq[mask_idx]  # Set the labels to the original token at masked positions
-        encoding["labels"] = labels  # Add labels to the encoding
+                seq[mask_idx] = tokenizer.mask_token_id  # Replace with mask token
+                labels[i][mask_idx] = encoding["input_ids"][i][mask_idx]  # Set the label to the original token
+        encoding["labels"] = labels
         return encoding
 
     output_dir = os.path.join(output_dir_base, model_name.replace("/", "_"))  # Use model name to create the directory
@@ -85,6 +91,8 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
     tokenizer.save_pretrained(output_dir)
 
     print(f"Model and tokenizer saved to {output_dir}")
+    end_time = time.time()
+    print(end_time-start_time)
 
 
 # Function to measure speed and resource usage
@@ -108,7 +116,7 @@ def subset_msmarco_for_mlm(dataset, subset_size=5, min_passage_length=50):
     return random.sample(filtered_data, subset_size)
 
 # Get a subset of MS MARCO
-subset_size = 200
+subset_size = 14000
 min_passage_length = 50
 subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
 
@@ -118,8 +126,8 @@ hf_dataset = Dataset.from_dict({"passages": passages})
 hf_list = hf_dataset.to_dict()
 
 # Split the data into training and validation
-train_data, test_data = train_test_split(hf_list["passages"], test_size=0.5, random_state=42)
-train_data, val_data = train_test_split(train_data, test_size=0.2, random_state=42)
+train_data, test_data = train_test_split(hf_list["passages"], test_size=2000, random_state=42)
+train_data, val_data = train_test_split(train_data, test_size=2000, random_state=42)
 
 # Convert the splits back to Hugging Face Datasets
 train_dataset = Dataset.from_dict({"passages": train_data})
