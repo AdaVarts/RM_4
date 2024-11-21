@@ -1,2 +1,4 @@
 *.pdf
 *.pptx
+.vscode
+fine_tuned_model/

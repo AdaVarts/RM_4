@@ -9,6 +9,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 import os
 import numpy as np 
+from copy import deepcopy
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -20,12 +21,12 @@ dataset = load_dataset("ms_marco", msmarco_version)
 # Define the models to compare
 model_names = [
     "bert-base-uncased",
-    # "bert-large-uncased",
-    # "distilbert-base-uncased",
-    # "roberta-base",
-    # "roberta-large",
-    # "albert-base-v2",
-    # "facebook/bart-base",  # BART also works for MLM
+    "bert-large-uncased",
+    "distilbert-base-uncased",
+    "roberta-base",
+    "roberta-large",
+    "albert-base-v2",
+    "facebook/bart-base",  # BART also works for MLM
 ]
 
 def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./fine_tuned_model"):
@@ -193,7 +194,7 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
     return accuracy, top_k_accuracy, precision, recall, f1, elapsed_time
 
 # Get a subset of MS MARCO
-subset_size = 40
+subset_size = 14000
 min_passage_length = 50
 subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
 
@@ -205,8 +206,8 @@ hf_list = hf_dataset.to_dict()
 results = {}
 for rand in [42, 123, 789, 56, 1008]:
     # Split the data into training and validation
-    train_data, test_data = train_test_split(hf_list["passages"], test_size=10, random_state=rand)
-    train_data, val_data = train_test_split(train_data, test_size=10, random_state=rand)
+    train_data, test_data = train_test_split(hf_list["passages"], test_size=2000, random_state=rand)
+    train_data, val_data = train_test_split(train_data, test_size=2000, random_state=rand)
 
     # Convert the splits back to Hugging Face Datasets
     train_dataset = Dataset.from_dict({"passages": train_data})
@@ -222,11 +223,11 @@ for rand in [42, 123, 789, 56, 1008]:
         accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k)
         # Store results
         if model_name in results.keys():
-            results[model_name]["accuracy"].append([accuracy])
-            results[model_name]["precision"].append([precision])
-            results[model_name]["recall"].append([recall])
-            results[model_name]["f1"].append([f1])
-            results[model_name]["elapsed_time"].append([elapsed_time])
+            results[model_name]["accuracy"].append(accuracy)
+            results[model_name]["precision"].append(precision)
+            results[model_name]["recall"].append(recall)
+            results[model_name]["f1"].append(f1)
+            results[model_name]["elapsed_time"].append(elapsed_time)
             for i in range(len(top_k)):
                 results[model_name][f"top_{top_k[i]}_accuracy"].append(top_k_accuracy[i])
         else: 
@@ -240,20 +241,21 @@ for rand in [42, 123, 789, 56, 1008]:
             for i in range(len(top_k)):
                 results[model_name][f"top_{top_k[i]}_accuracy"] = [top_k_accuracy[i]]
     
+    results_stats = deepcopy(results)
     for model_name in model_names:
         for metric in results[model_name].keys():
-            results[model_name][f'{metric}_mean'] = np.mean(results[model_name][metric])
-            results[model_name][f'{metric}_std'] = np.std(results[model_name][metric])
+            results_stats[model_name][f'{metric}_mean'] = np.mean(results[model_name][metric])
+            results_stats[model_name][f'{metric}_std'] = np.std(results[model_name][metric])
 
     # Display results
     print("\nModel Comparison Results:")
-    for model_name, metrics in results.items():
+    for model_name, metrics in results_stats.items():
         print(f"\n{model_name}:")
         for metric, value in metrics.items():
             print(f"  {metric}: {value})")
 
-df = pd.DataFrame.from_dict(results, orient='index')
+df = pd.DataFrame.from_dict(results_stats, orient='index')
 
 # Display the resulting DataFrame
 print(df)
-df.to_csv('results.csv', mode='a')
+df.to_csv('results.csv', mode='a', header= not os.path.exists('results.csv'))
