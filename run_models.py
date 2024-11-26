@@ -71,7 +71,7 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
         learning_rate=2e-5,              # Learning rate
         per_device_train_batch_size=8,   # Batch size for training
         per_device_eval_batch_size=8,    # Batch size for evaluation
-        num_train_epochs=1,              # Number of epochs
+        num_train_epochs=3,              # Number of epochs
         weight_decay=0.01,               # Weight decay
         logging_dir='./logs',            # Log directory
         logging_steps=10,                # Log every 10 steps
@@ -158,8 +158,8 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, models_dir, mask_prob=0.1
     for idx, passage in tqdm(enumerate(hft_dataset)):
         original_tokens = tokenizer.tokenize(passage["passages"])
         mask_indices = passage["mask_indices"]
-        predicted_tokens = [pred["token_str"] for preds in predictions[idx] for pred in preds]
-
+        
+        predicted_tokens = [pred["token_str"] if type(pred) is dict and "token_str" in pred.keys()  else "" for preds in predictions[idx] for pred in preds]
         for mask_idx in mask_indices:
             true_token = original_tokens[mask_idx]  # Get the true token
 
@@ -194,7 +194,7 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, models_dir, mask_prob=0.1
     return accuracy, top_k_accuracy, precision, recall, f1, elapsed_time
 
 # Get a subset of MS MARCO
-subset_size = 8000
+subset_size = 14000
 min_passage_length = 50
 subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
 
