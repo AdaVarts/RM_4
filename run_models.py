@@ -71,7 +71,7 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
         learning_rate=2e-5,              # Learning rate
         per_device_train_batch_size=8,   # Batch size for training
         per_device_eval_batch_size=8,    # Batch size for evaluation
-        num_train_epochs=3,              # Number of epochs
+        num_train_epochs=1,              # Number of epochs
         weight_decay=0.01,               # Weight decay
         logging_dir='./logs',            # Log directory
         logging_steps=10,                # Log every 10 steps
@@ -126,7 +126,7 @@ def mask_text(text, tokenizer, mask_prob=0.15):
     for idx in mask_indices:
         masked_tokens[idx] = tokenizer.mask_token
     return tokenizer.convert_tokens_to_string(masked_tokens), mask_indices
-
+## TODO perform cross-validation evaluation for non-fine-tuned-models
 # Function to evaluate MLM model
 def evaluate_mlm_model(model_name, hft_dataset, top_k, models_dir, mask_prob=0.15):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -194,7 +194,7 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, models_dir, mask_prob=0.1
     return accuracy, top_k_accuracy, precision, recall, f1, elapsed_time
 
 # Get a subset of MS MARCO
-subset_size = 14000
+subset_size = 6000
 min_passage_length = 50
 subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
 
@@ -220,7 +220,7 @@ for rand in [42, 123, 789, 56, 1008]:
 
     for model_name in model_names:
         print(f"Fine-tuning {model_name}...")
-        #fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base = models_dir)
+        fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base = models_dir)
         print(f"Evaluating {model_name}...")
         
         top_k = [5,10,20]
