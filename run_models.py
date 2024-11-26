@@ -71,7 +71,7 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
         learning_rate=2e-5,              # Learning rate
         per_device_train_batch_size=8,   # Batch size for training
         per_device_eval_batch_size=8,    # Batch size for evaluation
-        num_train_epochs=3,              # Number of epochs
+        num_train_epochs=1,              # Number of epochs
         weight_decay=0.01,               # Weight decay
         logging_dir='./logs',            # Log directory
         logging_steps=10,                # Log every 10 steps
@@ -128,13 +128,13 @@ def mask_text(text, tokenizer, mask_prob=0.15):
     return tokenizer.convert_tokens_to_string(masked_tokens), mask_indices
 
 # Function to evaluate MLM model
-def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
+def evaluate_mlm_model(model_name, hft_dataset, top_k, models_dir, mask_prob=0.15):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model_name = model_name.replace('/', '_')
     try:
-        model = AutoModelForMaskedLM.from_pretrained(f"fine_tuned_model/{model_name}")
+        model = AutoModelForMaskedLM.from_pretrained(f"{models_dir}/{model_name}")
     except:
-        model = AutoModelForSeq2SeqLM.from_pretrained(f"fine_tuned_model/{model_name}")
+        model = AutoModelForSeq2SeqLM.from_pretrained(f"{models_dir}/{model_name}")
     nlp_pipeline = pipeline("fill-mask", model=model, tokenizer=tokenizer, device=0 if torch.cuda.is_available() else -1)
 
     # Mask the text for all passages in the dataset
@@ -194,7 +194,7 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
     return accuracy, top_k_accuracy, precision, recall, f1, elapsed_time
 
 # Get a subset of MS MARCO
-subset_size = 14000
+subset_size = 8000
 min_passage_length = 50
 subset = subset_msmarco_for_mlm(dataset, subset_size=subset_size, min_passage_length=min_passage_length)
 
@@ -213,14 +213,18 @@ for rand in [42, 123, 789, 56, 1008]:
     train_dataset = Dataset.from_dict({"passages": train_data})
     val_dataset = Dataset.from_dict({"passages": val_data})
     test_dataset = Dataset.from_dict({"passages": test_data})
+    print(train_dataset, test_dataset, val_dataset)
+
+    # store the models for each split separately so we can re-use them
+    models_dir = f"./fine_tuned_model/{rand}.split"
 
     for model_name in model_names:
         print(f"Fine-tuning {model_name}...")
-        fine_tune_model(model_name, train_dataset, val_dataset)
+        #fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base = models_dir)
         print(f"Evaluating {model_name}...")
         
         top_k = [5,10,20]
-        accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k)
+        accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k, models_dir)
         # Store results
         if model_name in results.keys():
             results[model_name]["accuracy"].append(accuracy)
