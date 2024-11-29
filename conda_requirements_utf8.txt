@@ -1,0 +1,9 @@
+bzip2
+ca-certificates
+libffi
+libsqlite
+libzlib
+openssl
+python=3.10
+tk
+xz
