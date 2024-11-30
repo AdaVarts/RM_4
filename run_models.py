@@ -12,6 +12,8 @@ import numpy as np
 from copy import deepcopy
 import gc
 
+import config
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
@@ -20,15 +22,7 @@ msmarco_version = "v2.1"  # Change to "v1.1" if needed
 dataset = load_dataset("ms_marco", msmarco_version)
 
 # Define the models to compare
-model_names = [
-    "bert-base-uncased",
-    "bert-large-uncased",
-    "distilbert-base-uncased",
-    "roberta-base",
-    "roberta-large",
-    "albert-base-v2",
-    "facebook/bart-base",  # BART also works for MLM
-]
+model_names = config.model_names
 
 def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./fine_tuned_model"):
     start_time = time.time()
@@ -131,15 +125,15 @@ def mask_text(text, tokenizer, mask_prob=0.15):
     return tokenizer.convert_tokens_to_string(masked_tokens), mask_indices
 ## TODO perform cross-validation evaluation for non-fine-tuned-models
 # Function to evaluate MLM model
-def evaluate_mlm_model(model_name, hft_dataset, top_k, models_dir, mask_prob=0.15):
+def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
+    print(f"evaluate_mlm: {model_name}")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model_name = model_name.replace('/', '_')
     gc.collect()
     torch.cuda.empty_cache()
     try:
-        model = AutoModelForMaskedLM.from_pretrained(f"{models_dir}/{model_name}")
+        model = AutoModelForMaskedLM.from_pretrained(model_name)
     except:
-        model = AutoModelForSeq2SeqLM.from_pretrained(f"{models_dir}/{model_name}")
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     nlp_pipeline = pipeline("fill-mask", model=model, tokenizer=tokenizer, device=0 if torch.cuda.is_available() else -1)
 
     # Mask the text for all passages in the dataset
@@ -198,6 +192,30 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, models_dir, mask_prob=0.1
 
     return accuracy, top_k_accuracy, precision, recall, f1, elapsed_time
 
+def store_mlm_evaluation_results(model_name, accuracy, top_k_accuracy, precision, recall, f1, elapsed_time):
+    if model_name in results.keys():
+            results[model_name]["accuracy"].append(accuracy)
+            results[model_name]["precision"].append(precision)
+            results[model_name]["recall"].append(recall)
+            results[model_name]["f1"].append(f1)
+            results[model_name]["elapsed_time"].append(elapsed_time)
+            for i in range(len(top_k)):
+                results[model_name][f"top_{top_k[i]}_accuracy"].append(top_k_accuracy[i])
+    else: 
+        results[model_name] = {
+            "accuracy": [accuracy],
+            "precision": [precision],
+            "recall": [recall],
+            "f1": [f1],
+            "elapsed_time": [elapsed_time],
+        }
+        for i in range(len(top_k)):
+            results[model_name][f"top_{top_k[i]}_accuracy"] = [top_k_accuracy[i]]
+
+def run_eval(model_name, test_dataset, top_k):
+    accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k)
+    store_mlm_evaluation_results(model_name, accuracy, top_k_accuracy, precision, recall, f1, elapsed_time)
+
 # Get a subset of MS MARCO
 subset_size = 14000
 min_passage_length = 50
@@ -224,31 +242,20 @@ for rand in [42, 123, 789, 56, 1008]:
     models_dir = f"./fine_tuned_model/{rand}.split"
 
     for model_name in model_names:
-        print(f"Fine-tuning {model_name}...")
-        fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base = models_dir)
+        if config.do_fine_tuning:
+            print(f"Fine-tuning {model_name}...")
+            fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base = models_dir)
+        else:
+            print("Skipping fine-tuning")
+
         print(f"Evaluating {model_name}...")
-        
+        tuned_model_name = models_dir + "/" + model_name.replace('/', '_')
         top_k = [5,10,20]
-        accuracy, top_k_accuracy, precision, recall, f1, elapsed_time = evaluate_mlm_model(model_name, test_dataset, top_k, models_dir)
-        # Store results
-        if model_name in results.keys():
-            results[model_name]["accuracy"].append(accuracy)
-            results[model_name]["precision"].append(precision)
-            results[model_name]["recall"].append(recall)
-            results[model_name]["f1"].append(f1)
-            results[model_name]["elapsed_time"].append(elapsed_time)
-            for i in range(len(top_k)):
-                results[model_name][f"top_{top_k[i]}_accuracy"].append(top_k_accuracy[i])
-        else: 
-            results[model_name] = {
-                "accuracy": [accuracy],
-                "precision": [precision],
-                "recall": [recall],
-                "f1": [f1],
-                "elapsed_time": [elapsed_time],
-            }
-            for i in range(len(top_k)):
-                results[model_name][f"top_{top_k[i]}_accuracy"] = [top_k_accuracy[i]]
+        if config.evaluate_baseline:
+            run_eval(model_name, test_dataset, top_k)
+        if config.evaluate_tuned:
+            run_eval(tuned_model_name, test_dataset, top_k)
+        
     
     results_stats = deepcopy(results)
     for model_name in model_names:
