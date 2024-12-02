@@ -11,6 +11,7 @@ import os
 import numpy as np 
 from copy import deepcopy
 import gc
+from collections import Counter
 
 import config
 
@@ -50,7 +51,7 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
             mask_indices = random.sample(range(num_tokens), max(1, int(num_tokens * 0.15)))
             for mask_idx in mask_indices:
                 seq[mask_idx] = tokenizer.mask_token_id  # Replace with mask token
-                labels[i][mask_idx] = encoding["input_ids"][i][mask_idx]  # Set the label to the original token
+                # labels[i][mask_idx] = encoding["input_ids"][i][mask_idx]  # Set the label to the original token
         encoding["labels"] = labels
         return encoding
 
@@ -158,7 +159,14 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
         original_tokens = tokenizer.tokenize(passage["passages"])
         mask_indices = passage["mask_indices"]
         
-        predicted_tokens = [pred["token_str"] if type(pred) is dict and "token_str" in pred.keys()  else "" for preds in predictions[idx] for pred in preds]
+        def mapppp(pred):
+            if type(pred) is dict and "token_str" in pred.keys():
+                return pred["token_str"]  
+            print(pred)
+            return ""
+
+        predicted_tokens = [ mapppp(pred) for preds in predictions[idx] for pred in preds]
+        # predicted_tokens = [pred["token_str"] if type(pred) is dict and "token_str" in pred.keys() else "" for preds in predictions[idx] for pred in preds]
         for mask_idx in mask_indices:
             true_token = original_tokens[mask_idx]  # Get the true token
 
@@ -173,7 +181,6 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
             if true_token == predicted_tokens[0]:
                 total_correct += 1
             total_predictions += 1
-
 
     accuracy = total_correct / total_predictions if total_predictions > 0 else 0
     precision = precision_score(all_true_labels, all_predicted_labels, average='micro', zero_division=0)
