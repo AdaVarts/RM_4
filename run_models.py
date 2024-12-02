@@ -165,7 +165,13 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
             print(pred)
             return ""
 
-        predicted_tokens = [ mapppp(pred) for preds in predictions[idx] for pred in preds]
+        predicted_tokens = []
+        for preds in predictions[idx]:
+            if type(preds) is dict and "token_str" in preds.keys():
+                predicted_tokens.append(mapppp(pred))
+            else:
+                for pred in preds:
+                    predicted_tokens.append(mapppp(pred))
         # predicted_tokens = [pred["token_str"] if type(pred) is dict and "token_str" in pred.keys() else "" for preds in predictions[idx] for pred in preds]
         for mask_idx in mask_indices:
             true_token = original_tokens[mask_idx]  # Get the true token
