@@ -72,7 +72,7 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
         num_train_epochs=3,              # Number of epochs
         weight_decay=0.01,               # Weight decay
         logging_dir='./logs',            # Log directory
-        logging_steps=10,                # Log every 10 steps
+        logging_steps=500,                # Log every 10 steps
     )
 
     # Initialize the Trainer
@@ -94,6 +94,8 @@ def fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base="./f
     end_time = time.time()
     print(end_time-start_time)
 
+def can_cache_tuned(model_name):
+    return os.path.exists(model_name + "/model.safetensors")
 
 # Function to measure speed and resource usage
 def measure_speed(func, *args, **kwargs):
@@ -162,7 +164,7 @@ def evaluate_mlm_model(model_name, hft_dataset, top_k, mask_prob=0.15):
         def mapppp(pred):
             if type(pred) is dict and "token_str" in pred.keys():
                 return pred["token_str"]  
-            print(pred)
+            print("WARNING:"+pred)
             return ""
 
         predicted_tokens = []
@@ -255,14 +257,15 @@ for rand in [42, 123, 789, 56, 1008]:
     models_dir = f"./fine_tuned_model/{rand}.split"
 
     for model_name in model_names:
-        if config.do_fine_tuning:
+        tuned_model_name = models_dir + "/" + model_name.replace('/', '_')
+        cache_avail = can_cache_tuned(tuned_model_name)
+        if config.do_fine_tuning and not (cache_avail and config.cache_tuned):
             print(f"Fine-tuning {model_name}...")
             fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base = models_dir)
         else:
-            print("Skipping fine-tuning")
+            print("Skipping fine-tuning (cache avail: {cache_avail})")
 
         print(f"Evaluating {model_name}...")
-        tuned_model_name = models_dir + "/" + model_name.replace('/', '_')
         top_k = [5,10,20]
         if config.evaluate_baseline:
             run_eval(model_name, test_dataset, top_k)
