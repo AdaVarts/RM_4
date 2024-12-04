@@ -12,6 +12,7 @@ import numpy as np
 from copy import deepcopy
 import gc
 from collections import Counter
+import re
 
 import config
 
@@ -258,12 +259,13 @@ for rand in [42, 123, 789, 56, 1008]:
 
     for model_name in model_names:
         tuned_model_name = models_dir + "/" + model_name.replace('/', '_')
+        metric_tuned_model_name = "tuned/" + model_name.replace('/', '_')
         cache_avail = can_cache_tuned(tuned_model_name)
         if config.do_fine_tuning and not (cache_avail and config.cache_tuned):
-            print(f"Fine-tuning {model_name}...")
+            print(f"Fine-tuning {model_name} to {tuned_model_name}...")
             fine_tune_model(model_name, train_dataset, val_dataset, output_dir_base = models_dir)
         else:
-            print("Skipping fine-tuning (cache avail: {cache_avail})")
+            print(f"Skipping fine-tuning (cache avail: {cache_avail})")
 
         print(f"Evaluating {model_name}...")
         top_k = [5,10,20]
@@ -272,19 +274,33 @@ for rand in [42, 123, 789, 56, 1008]:
         if config.evaluate_tuned:
             run_eval(tuned_model_name, test_dataset, top_k)
         
-    
-    results_stats = deepcopy(results)
-    for model_name in model_names:
-        for metric in results[model_name].keys():
-            results_stats[model_name][f'{metric}_mean'] = np.mean(results[model_name][metric])
-            results_stats[model_name][f'{metric}_std'] = np.std(results[model_name][metric])
+    if config.evaluate_baseline:
+        results_stats = deepcopy(results)
+        for model_name in model_names:
+            for metric in results[model_name].keys():
+                results_stats[model_name][f'{metric}_mean'] = np.mean(results[model_name][metric])
+                results_stats[model_name][f'{metric}_std'] = np.std(results[model_name][metric])
 
-    # Display results
-    print("\nModel Comparison Results:")
-    for model_name, metrics in results_stats.items():
-        print(f"\n{model_name}:")
-        for metric, value in metrics.items():
-            print(f"  {metric}: {value})")
+        # Display results
+        print("\nModel Comparison Results:")
+        for model_name, metrics in results_stats.items():
+            print(f"\n{model_name}:")
+            for metric, value in metrics.items():
+                print(f"  {metric}: {value})")
+
+    if config.evaluate_tuned:
+        results_stats = deepcopy(results)
+        for model_name in model_names:
+            for metric in results[tuned_model_name].keys():
+                results_stats[tuned_model_name][f'{metric}_mean'] = np.mean(results[tuned_model_name][metric])
+                results_stats[tuned_model_name][f'{metric}_std'] = np.std(results[tuned_model_name][metric])
+
+        # Display results
+        print("\nModel Comparison Results:")
+        for model_name, metrics in results_stats.items():
+            print(f"\n{model_name}:")
+            for metric, value in metrics.items():
+                print(f"  {metric}: {value})")
 
 df = pd.DataFrame.from_dict(results_stats, orient='index')
 
